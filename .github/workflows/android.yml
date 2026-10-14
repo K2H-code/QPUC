@@ -1,0 +1,75 @@
+name: Construire l'APK Android
+
+on:
+  workflow_dispatch:          # bouton « Run workflow » dans l'onglet Actions
+  push:
+    branches: [main]
+    tags: ["v*"]              # un tag comme v1.0.0 publie aussi l'APK dans « Releases »
+
+permissions:
+  contents: write             # nécessaire pour attacher l'APK à une Release
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Installer les dépendances
+        run: npm install
+
+      - name: Préparer le dossier www
+        run: node scripts/prepare-www.js
+
+      - name: Créer le projet Android
+        run: npx cap add android
+
+      - name: Générer l'icône de l'application
+        continue-on-error: true   # si ça échoue, l'APK est quand même construit (icône par défaut)
+        run: npx capacitor-assets generate --android --iconBackgroundColor '#062218' --iconBackgroundColorDark '#062218'
+
+      - name: Couleurs de la barre d'état (vert sombre)
+        run: |
+          f=android/app/src/main/res/values/colors.xml
+          if [ -f "$f" ]; then
+            sed -i 's/#3F51B5/#062218/; s/#303F9F/#050d09/' "$f"
+          fi
+
+      - name: Synchroniser le jeu dans le projet Android
+        run: npx cap sync android
+
+      - name: Compiler l'APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Renommer l'APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk question-pour-un-camer.apk
+
+      - name: Publier l'APK (téléchargeable depuis l'onglet Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Question-pour-un-Camer-APK
+          path: question-pour-un-camer.apk
+          if-no-files-found: error
+
+      - name: Attacher l'APK à la Release (uniquement pour les tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: question-pour-un-camer.apk
