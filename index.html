@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#050d09" />
+  <title>Question pour un Camer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="lights" aria-hidden="true"></div>
+
+  <!-- ACCUEIL -->
+  <main id="screen-home" class="screen active">
+    <div class="home-inner">
+      <div class="logo">
+        <span class="pre">QUESTION POUR UN</span>
+        <span class="name">CAMER</span>
+        <span class="flagbar"><i></i><i></i><i></i></span>
+        <span class="stars-deco">★ ★ ★</span>
+      </div>
+      <p class="tagline">Traverse les six âges de la vie, réponds juste et fais grossir ta cagnotte.</p>
+      <div class="home-stats">
+        <span class="chip">★ <b id="home-stars">0</b></span>
+        <span class="chip">💰 <b id="home-money">0 F</b></span>
+      </div>
+      <p id="home-progress" class="home-progress"></p>
+      <button id="btn-play" class="btn big">Jouer</button>
+      <div class="home-links">
+        <button id="btn-defis" class="btn ghost">🎯 Défis du jour <span id="home-badge" class="badge hidden">0</span></button>
+        <button id="btn-rules" class="btn ghost">Règles</button>
+      </div>
+      <button id="btn-new" class="link">Nouvelle partie</button>
+    </div>
+  </main>
+
+  <!-- PARCOURS -->
+  <main id="screen-map" class="screen">
+    <header class="topbar">
+      <button id="map-home" class="chip" aria-label="Accueil">⌂</button>
+      <span class="chip">★ <b id="map-stars">0</b></span>
+      <span class="chip">💰 <b id="map-money">0 F</b></span>
+      <button id="map-defis" class="chip" aria-label="Défis du jour">🎯 <span id="map-badge" class="badge hidden">0</span></button>
+    </header>
+    <div id="map-scroll" class="map-scroll">
+      <svg id="map-svg" role="img" aria-label="Parcours des niveaux"></svg>
+    </div>
+    <button id="map-play" class="btn map-play">▶ Jouer</button>
+  </main>
+
+  <!-- JEU -->
+  <main id="screen-game" class="screen">
+    <header class="topbar">
+      <button id="game-back" class="chip">← Parcours</button>
+      <div class="era-title">
+        <small id="g-kicker"></small>
+        <b id="g-era"></b>
+      </div>
+      <span class="chip">★ <b id="g-stars">0</b></span>
+    </header>
+
+    <section class="stage">
+      <div id="g-art" class="stage-art">🧒</div>
+      <div id="g-dots" class="dots"></div>
+      <p id="g-level" class="level-label"></p>
+      <div id="bubble" class="bubble" aria-live="polite">
+        <small>CAGNOTTE</small>
+        <strong id="bubble-amount">0 F</strong>
+      </div>
+    </section>
+
+    <section class="qa">
+      <div class="banner"><p id="q-text"></p></div>
+      <div class="answers">
+        <button class="answer" data-i="0"><i>A</i><span></span></button>
+        <button class="answer" data-i="1"><i>B</i><span></span></button>
+        <button class="answer" data-i="2"><i>C</i><span></span></button>
+        <button class="answer" data-i="3"><i>D</i><span></span></button>
+      </div>
+    </section>
+  </main>
+
+  <!-- VICTOIRE -->
+  <main id="screen-end" class="screen">
+    <div class="home-inner">
+      <div class="trophy">🏆</div>
+      <h2>Bravo, tu es un vrai Camer !</h2>
+      <p class="tagline">Tu as traversé toutes les ères de la vie.</p>
+      <div class="home-stats">
+        <span class="chip">💰 <b id="end-money">0 F</b></span>
+        <span class="chip">★ <b id="end-stars">0</b></span>
+      </div>
+      <button id="end-replay" class="btn big">Rejouer le parcours</button>
+      <button id="end-home" class="link">Retour à l'accueil</button>
+    </div>
+  </main>
+
+  <!-- FENÊTRE -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 id="modal-title"></h3>
+      <div id="modal-body"></div>
+      <div id="modal-actions" class="modal-actions"></div>
+    </div>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="questions.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

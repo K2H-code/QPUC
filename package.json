@@ -1,0 +1,17 @@
+{
+  "name": "question-pour-un-camer",
+  "version": "1.0.0",
+  "description": "Question pour un Camer — jeu de quiz aux couleurs du Cameroun",
+  "private": true,
+  "scripts": {
+    "www": "node scripts/prepare-www.js"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^6.2.0"
+  }
+}
