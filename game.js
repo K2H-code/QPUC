@@ -22,7 +22,7 @@
   /* ------------------------------------------------------------------
      Sauvegarde (localStorage, protégée par try/catch)
      ------------------------------------------------------------------ */
-  const defaults = () => ({ pos: 0, money: 0, stars: 0, passed: 0, used: {}, daily: null });
+  const defaults = () => ({ pos: 0, money: 0, stars: 0, passed: 0, used: {}, daily: null, adCount: 0, adProgress: 0 });
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
@@ -43,9 +43,10 @@
   function ensureDaily() {
     const t = todayStr();
     if (!S.daily || S.daily.date !== t) {
-      S.daily = { date: t, stats: { correct: 0, streak: 0, bestStreak: 0, played: 0, erasDone: 0 }, claimed: [] };
+      S.daily = { date: t, stats: { correct: 0, streak: 0, bestStreak: 0, played: 0, erasDone: 0 }, claimed: [], adStars: 0 };
       save();
     }
+    if (S.daily.adStars === undefined) S.daily.adStars = 0;
   }
   const hashStr = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
   function mulberry32(a) {
@@ -71,6 +72,7 @@
     st.played++;
     if (ok) { st.correct++; st.streak++; st.bestStreak = Math.max(st.bestStreak, st.streak); } else { st.streak = 0; }
     if (eraDone) st.erasDone++;
+    S.adCount = (S.adCount || 0) + 1;
     save();
     refreshHud();
   }
@@ -117,6 +119,120 @@
     t.textContent = msg; t.classList.remove("hidden");
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.add("hidden"), 2200);
+  }
+
+  /* ------------------------------------------------------------------
+     Publicités AdMob (uniquement dans l'application Android).
+     Réglages dans ads-config.js. Sur la version web, rien ne s'affiche.
+     ------------------------------------------------------------------ */
+  const ADS = typeof ADS_CONFIG !== "undefined" ? ADS_CONFIG : { enabled: false };
+  const getAdMob = () => (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.AdMob) || null;
+  const isNative = () => !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform());
+  const adsAvailable = () => !!ADS.enabled && isNative() && !!getAdMob();
+  const withTimeout = (p, ms, fallback) => Promise.race([p, new Promise((r) => setTimeout(() => r(fallback), ms))]);
+  const maxAdStars = () => (typeof ADS.maxAdStarsPerDay === "number" ? ADS.maxAdStarsPerDay : 3);
+  const adsPerStar = () => Math.max(1, (typeof ADS.adsPerStar === "number" ? ADS.adsPerStar : 2));
+  // Compte une pub regardée jusqu'au bout. Renvoie true si elle complète une étoile (2 pubs = 1 ★).
+  function creditAd() {
+    S.adProgress = (S.adProgress || 0) + 1;
+    if (S.adProgress >= adsPerStar()) {
+      S.adProgress = 0; ensureDaily(); S.daily.adStars++; S.stars++; save(); refreshHud();
+      return true;
+    }
+    save();
+    return false;
+  }
+  const adStarsLeft = () => { ensureDaily(); return Math.max(0, maxAdStars() - (S.daily.adStars || 0)); };
+
+  let adsReady = false;
+  async function initAds() {
+    if (adsReady || !adsAvailable()) return adsReady;
+    const AdMob = getAdMob();
+    try {
+      try { // message de consentement (obligatoire en Europe)
+        const info = await AdMob.requestConsentInfo();
+        if (info && info.isConsentFormAvailable && info.status === "REQUIRED") await AdMob.showConsentForm();
+      } catch (e) { /* pas de formulaire : on continue */ }
+      await AdMob.initialize({ initializeForTesting: !!ADS.testing });
+      adsReady = true;
+    } catch (e) { adsReady = false; }
+    return adsReady;
+  }
+
+  // Pub avec récompense : renvoie true si le joueur a regardé la pub jusqu'au bout.
+  async function showRewarded() {
+    if (!adsAvailable() || !(await initAds())) return false;
+    const AdMob = getAdMob();
+    const handles = [];
+    try {
+      const loaded = await withTimeout(
+        AdMob.prepareRewardVideoAd({ adId: ADS.rewardedId, isTesting: !!ADS.testing }).then(() => true, () => false),
+        15000, false);
+      if (!loaded) return false;
+      // Si le joueur ferme la pub sans récompense, on débloque l'écran.
+      let closed;
+      const dismissed = new Promise((r) => (closed = r));
+      try { handles.push(await AdMob.addListener("onRewardedVideoAdDismissed", () => setTimeout(() => closed(false), 800))); } catch (e) { /* ignore */ }
+      const shown = AdMob.showRewardVideoAd().then((reward) => !!reward, () => false);
+      return await withTimeout(Promise.race([shown, dismissed]), 5 * 60 * 1000, false);
+    } catch (e) {
+      return false;
+    } finally {
+      handles.forEach((h) => { try { h && h.remove && h.remove(); } catch (e) { /* ignore */ } });
+    }
+  }
+
+  // Pub plein écran, affichée à un moment calme (entre deux questions).
+  async function showInterstitial() {
+    if (!adsAvailable() || !(await initAds())) return;
+    const AdMob = getAdMob();
+    try {
+      const loaded = await withTimeout(
+        AdMob.prepareInterstitial({ adId: ADS.interstitialId, isTesting: !!ADS.testing }).then(() => true, () => false),
+        8000, false);
+      if (loaded) await withTimeout(AdMob.showInterstitial(), 8000, null);
+    } catch (e) { /* si la pub échoue, le jeu continue normalement */ }
+  }
+
+  // Lance la suite du jeu, après une pub plein écran si c'est le moment.
+  async function proceed(next) {
+    const every = typeof ADS.interstitialEvery === "number" ? ADS.interstitialEvery : 5;
+    if (adsAvailable() && every > 0 && (S.adCount || 0) >= every) {
+      S.adCount = 0; save();
+      await showInterstitial();
+    }
+    next();
+  }
+
+  // Proposition « regarde une pub pour gagner une étoile » après un échec.
+  function offerAd(info, note) {
+    modal({
+      title: "✖ Raté !", dismiss: false,
+      html: info + (note || "") + `<p>Regarde <b>${adsPerStar()} courtes pubs</b> pour gagner <b>1 ★</b> et <b>sauver ta cagnotte</b> de <b>${fmt(S.money)}</b> ?</p><p class="hint">Pub ${(S.adProgress || 0) + 1}/${adsPerStar()} · étoiles par pub restantes aujourd'hui : ${adStarsLeft()}</p>`,
+      buttons: [
+        { label: `▶ Regarder la pub ${(S.adProgress || 0) + 1}/${adsPerStar()}`, onClick: async () => {
+          toast("Chargement de la pub…");
+          if (await showRewarded()) {
+            if (creditAd()) {
+              toast("★ +1 étoile : seconde chance !");
+              useStar();
+            } else {
+              offerAd(info, `<p class="hint">✔ Pub 1 regardée, encore une pour l'étoile !</p>`);
+            }
+          } else {
+            offerAd(info, `<p class="hint">⚠ Pub indisponible pour le moment (vérifie ta connexion).</p>`);
+          }
+        } },
+        { label: "Non, tout perdre", cls: "ghost", onClick: () => loseMoney(info) },
+      ],
+    });
+  }
+
+  // Bloc « regarder une pub » dans la fenêtre des défis du jour.
+  function adBlock() {
+    if (!adsAvailable() || adStarsLeft() <= 0) return "";
+    return `<div class="defi"><div class="defi-top"><b>Regarder une pub</b><span class="rew">${adsPerStar()} pubs = +1 ★</span></div>
+      <div class="defi-bot"><small>Pub ${(S.adProgress || 0) + 1}/${adsPerStar()} · encore ${adStarsLeft()} ★ possible aujourd'hui</small><button class="btn mini" id="defi-ad">▶ Regarder</button></div></div>`;
   }
 
   /* ------------------------------------------------------------------
@@ -181,10 +297,14 @@
       const b = eraBox[i];
       out += `<rect x="0" y="${b.top}" width="${MAP.W}" height="${b.bottom - b.top + 1}" fill="${e.tint}"/>`;
       out += `<line x1="0" x2="${MAP.W}" y1="${b.top}" y2="${b.top}" stroke="${e.accent}" stroke-opacity=".35" stroke-width="2"/>`;
+      if (e.big) out += `<text x="${MAP.W / 2}" y="${((b.top + b.bottom) / 2 + 60).toFixed(0)}" font-size="230" text-anchor="middle" opacity=".05">${e.big}</text>`;
+      const n = e.deco.length, avail = b.bottom - b.top - 150;
       e.deco.forEach((d, k) => {
-        const y = b.top + 90 + k * ((b.bottom - b.top - BH_PAD()) / 5);
-        const x = k % 2 ? 358 : 42;
-        out += `<text x="${x}" y="${y.toFixed(0)}" font-size="34" text-anchor="middle" opacity=".22">${d}</text>`;
+        const y = b.top + 85 + k * (avail / Math.max(1, n - 1));
+        const x = k % 2 ? 362 - (k % 3) * 6 : 38 + (k % 3) * 6;
+        const size = 26 + ((k * 7) % 4) * 5;
+        const rot = ((k * 37) % 40) - 20;
+        out += `<text x="${x}" y="${y.toFixed(0)}" font-size="${size}" text-anchor="middle" opacity="${(0.17 + (k % 3) * 0.04).toFixed(2)}" transform="rotate(${rot} ${x} ${y.toFixed(0)})">${d}</text>`;
       });
     });
 
@@ -351,7 +471,7 @@
       if (eraDone && !finished) html += `<p>🎉 Tu quittes <b>${era.name}</b> et entres dans <b>${ERAS[Math.floor(S.pos / LEVELS_PER_ERA)].name}</b>.</p>`;
       const buttons = finished
         ? [{ label: "🏆 Voir ma victoire", onClick: showVictory }]
-        : [{ label: "Niveau suivant ▶", onClick: startLevel }, { label: "Parcours", cls: "ghost", onClick: () => openMap(true) }];
+        : [{ label: "Niveau suivant ▶", onClick: () => proceed(startLevel) }, { label: "Parcours", cls: "ghost", onClick: () => openMap(true) }];
       modal({ title: eraDone ? "🎉 Ère terminée !" : "✔ Bonne réponse !", html, buttons, dismiss: false });
     }, 1500);
   }
@@ -361,11 +481,13 @@
     const info = `<p>La bonne réponse était : <b>${goodText}</b>.</p>`;
     if (S.money === 0) {
       modal({ title: "✖ Raté !", html: info + "<p>Ta cagnotte est déjà à 0 F : rien à perdre, retente ta chance !</p>", dismiss: false,
-        buttons: [{ label: "Rejouer le niveau", onClick: startLevel }, { label: "Parcours", cls: "ghost", onClick: () => openMap(false) }] });
+        buttons: [{ label: "Rejouer le niveau", onClick: () => proceed(startLevel) }, { label: "Parcours", cls: "ghost", onClick: () => openMap(false) }] });
     } else if (S.stars > 0) {
       modal({ title: "✖ Raté !", dismiss: false,
         html: info + `<p>Tu as <b>${S.stars} ★</b>. Utilises-en une pour une <b>seconde chance</b> et sauver ta cagnotte de <b>${fmt(S.money)}</b> ?</p>`,
         buttons: [{ label: "Utiliser une ★", onClick: useStar }, { label: "Non, tout perdre", cls: "ghost", onClick: () => loseMoney(info) }] });
+    } else if (adsAvailable() && adStarsLeft() > 0) {
+      offerAd(info);
     } else {
       loseMoney(info + `<p class="hint">Pas d'étoile ★ pour te sauver. Gagne-en une tous les ${STAR_EVERY} niveaux réussis ou avec les défis du jour.</p>`);
     }
@@ -380,7 +502,7 @@
     setTimeout(() => modal({
       title: "💥 Cagnotte perdue",
       html: html + `<p>Ta cagnotte retombe à <b>0 F</b>. Tu gardes ta place sur le parcours.</p>`, dismiss: false,
-      buttons: [{ label: "Rejouer le niveau", onClick: startLevel }, { label: "Parcours", cls: "ghost", onClick: () => openMap(false) }],
+      buttons: [{ label: "Rejouer le niveau", onClick: () => proceed(startLevel) }, { label: "Parcours", cls: "ghost", onClick: () => openMap(false) }],
     }), 1300);
   }
 
@@ -399,8 +521,8 @@
         </div></div>`;
     }).join("");
     modal({
-      title: "🎯 Défis du jour",
-      html: items + `<p class="hint">★ aussi tous les ${STAR_EVERY} niveaux réussis : <b>${S.passed % STAR_EVERY}/${STAR_EVERY}</b></p><p class="hint">De nouveaux défis arrivent chaque jour.</p>`,
+      title: "Défis du jour",
+      html: items + adBlock() + `<p class="hint">★ aussi tous les ${STAR_EVERY} niveaux réussis : <b>${S.passed % STAR_EVERY}/${STAR_EVERY}</b></p><p class="hint">De nouveaux défis arrivent chaque jour.</p>`,
       buttons: [{ label: "Fermer", cls: "ghost" }],
     });
     $$("#modal-body [data-claim]").forEach((b) => (b.onclick = () => {
@@ -409,16 +531,28 @@
       S.daily.claimed.push(c.id); S.stars += c.reward; save(); refreshHud();
       openDefis();
     }));
+    const adBtn = $("#defi-ad");
+    if (adBtn) adBtn.onclick = async () => {
+      adBtn.disabled = true;
+      toast("Chargement de la pub…");
+      if (await showRewarded()) {
+        toast(creditAd() ? "★ +1 étoile !" : "✔ Pub 1/" + adsPerStar() + " : encore une pour l'étoile");
+      } else {
+        toast("Pub indisponible pour le moment");
+      }
+      openDefis();
+    };
   }
 
   function openRules() {
     modal({
       title: "Règles du jeu",
       html: `<ul class="rules">
-        <li>Traverse <b>${ERAS.length} ères de la vie</b>, de la Naissance à la Sagesse : ${LEVELS_PER_ERA} niveaux par ère, une question par niveau.</li>
+        <li>Traverse <b>${ERAS.length} ères de l'évolution du monde</b>, de la Préhistoire à l'ère numérique : ${LEVELS_PER_ERA} niveaux par ère, une question par niveau.</li>
         <li>Chaque bonne réponse fait <b>grossir ta cagnotte</b>, et le gain augmente à chaque ère.</li>
         <li>Une mauvaise réponse ramène ta cagnotte à <b>0 F</b>… sauf si tu utilises une <b>★ étoile</b> : seconde chance, cagnotte sauvée.</li>
         <li>Gagne des étoiles tous les <b>${STAR_EVERY} niveaux réussis</b> ou en relevant les <b>défis du jour</b>.</li>
+        ${adsAvailable() ? "<li>Tu peux aussi gagner une ★ en regardant <b>${adsPerStar()} pubs</b> (quelques fois par jour).</li>" : ""}
       </ul>`,
     });
   }
@@ -462,4 +596,5 @@
 
   ensureDaily();
   refreshHud();
+  setTimeout(initAds, 1500); // prépare les pubs (et le message de consentement) au lancement
 })();
